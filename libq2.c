@@ -326,12 +326,12 @@ static apr_array_header_t* q2_split(apr_pool_t *mp,
     if ((str_c = apr_pstrdup(mp, s)) == NULL) return NULL;
     if ((a = apr_array_make(mp, 0, sizeof(char*))) == NULL) return NULL;
     last = NULL;
-    tok = apr_strtok(str_c, sep, &last);                 //| first token
+    tok = apr_strtok(str_c, sep, &last);                 //! first token
     while (*last) {
-        APR_ARRAY_PUSH(a, char*) = apr_pstrdup(mp, tok); //| curr token
-        tok = apr_strtok(last, sep, &last);              //| next token
+        APR_ARRAY_PUSH(a, char*) = apr_pstrdup(mp, tok); //! curr token
+        tok = apr_strtok(last, sep, &last);              //! next token
     }
-    APR_ARRAY_PUSH(a, char*) = apr_pstrdup(mp, tok);     //| last token
+    APR_ARRAY_PUSH(a, char*) = apr_pstrdup(mp, tok);     //! last token
     return a;
 }
 
@@ -552,11 +552,11 @@ static apr_array_header_t* q2_dbd_select(apr_pool_t *mp,
                                          const char *sql,
                                          int *err)
 {
-    apr_status_t rv;                //| status
-    apr_dbd_results_t *res = NULL;  //| dbd resultset
-    apr_dbd_row_t *row = NULL;      //| next row in the resultset
-    apr_array_header_t *rset;       //| the recordset returned by the server
-    apr_table_t *rec;               //| a recordset record
+    apr_status_t rv;                //! status
+    apr_dbd_results_t *res = NULL;  //! dbd resultset
+    apr_dbd_row_t *row = NULL;      //! next row in the resultset
+    apr_array_header_t *rset;       //! the recordset returned by the server
+    apr_table_t *rec;               //! a recordset record
     int first_rec;
     int num_fields;
     const char *error;
@@ -1338,6 +1338,9 @@ static int q2_uri_get_pages(apr_pool_t *mp, apr_array_header_t *apr_uri_t)
         if (page > 0) {
             next = APR_ARRAY_IDX(apr_uri_t, apr_uri_t->nelts-2, const char*);
             if (strncasecmp(next, "next", 4) == 0) {
+                apr_array_pop(apr_uri_t);  //! remove the page number
+                apr_array_pop(apr_uri_t);  //! remove 'next'
+                return page;               //! returns the page number
             }
         }
     }
@@ -2066,6 +2069,9 @@ static const char* q2_sql_select_tab(q2_t *q2)
     sql = apr_psprintf(q2->pool, "SELECT * FROM %s", q2->table);
     q2->query_num_rows = q2_count_rows(q2, sql);
     return apr_psprintf(q2->pool,
+                        limit == NULL ? "%s%s" : "%s %s", //! Pattern
+                        sql,                              //! First in pattern
+                        limit == NULL ? "" : limit);      //! Second in pattern
 }
 
 static const char* q2_sql_select_tab_key(q2_t *q2)
@@ -2257,6 +2263,9 @@ static const char* q2_sql_select_tab_prm(q2_t *q2)
     q2->query_num_rows = q2_count_rows(q2, sql);
 
     return apr_psprintf(q2->pool,
+                        limit == NULL ? "%s%s" : "%s %s", //! Pattern
+                        sql,                              //! First pattern el
+                        limit == NULL ? "" : limit);      //! Second pattern el
 }
 
 static const char* q2_sql_select_tab_key_prm(q2_t *q2)
@@ -2642,6 +2651,7 @@ static const char* q2_sql_insert(q2_t *q2)
             if (q2->r_params != NULL) v = apr_table_get(q2->r_params, k);
             if (v == NULL) {
                 const char *err = apr_psprintf(q2->pool, "Parameter %s is mandatory", k);
+                q2_log_error(q2, "%s", err); //!
                 return NULL;
             }
             APR_ARRAY_PUSH(defaults, const char*) = apr_pstrdup(q2->pool, v);

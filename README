@@ -1,0 +1,25 @@
+libq2
+-----
+Author: Riccardo Vacirca (riccardovacirca@yahoo.it)
+Pre-release: 0.0.1-alpha
+License: Apache v2.0
+
+Description
+-----------
+Extension module for Apache2. Provides a RESTful API to access a database server
+using DBD and an abstraction layer on INFORMATION_SCHEMA which returns a uniform
+set of metadata.
+
+Supported HTTP methods
+----------------------
+GET, POST, PUT, PATCH, DELETE
+
+Supported database servers
+--------------------------
+MySQL, PostgreSQL, SQLite3, SQL Server
+
+Features
+--------
+HMAC Authentication (SHA 256), JSON Payload, ETag, Mid-air collisions,
+Asynchronous operations, HETOAS, Configurable result pagination,
+Partial responses

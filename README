@@ -1,25 +1,89 @@
 libq2
------
+=====
 Author: Riccardo Vacirca (riccardovacirca@yahoo.it)
 Pre-release: 0.0.1-alpha
 License: Apache v2.0
 
 Description
------------
+===========
 Extension module for Apache2. Provides a RESTful API to access a database server
 using DBD and an abstraction layer on INFORMATION_SCHEMA which returns a uniform
 set of metadata.
 
 Supported HTTP methods
-----------------------
+======================
 GET, POST, PUT, PATCH, DELETE
 
 Supported database servers
---------------------------
+==========================
 MySQL, PostgreSQL, SQLite3, SQL Server
 
 Features
---------
-HMAC Authentication (SHA 256), JSON Payload, ETag, Mid-air collisions,
-Asynchronous operations, HETOAS, Configurable result pagination,
+========
+HMAC Authentication (SHA 256)
+JSON Payload
+ETag
+Mid-air collisions (temporarily disabled)
+Asynchronous operations
+HETOAS
+Configurable result pagination
 Partial responses
+
+Compile
+=======
+$ apxs -D_APMOD -c -o mod_q2.so libq2.c -lssl -lcrypto
+
+Install and configure (Debian, MySQL)
+=====================================
+$ sudo apxs -i -S LIBEXECDIR=`apxs -q LIBEXECDIR` -n mod_q2.so mod_q2.la
+$ sudo mkdir -p /etc/q2/tmp
+
+File: /etc/apache2/mods-available/q2.load
+----
+LoadModule q2_module /usr/lib/apache2/mod_q2.so
+
+File: /etc/apache2/mods-available/q2.conf
+----
+<IfModule q2_module>
+    DBDriver  "mysql"
+    DBDParams "host=localhost, port=3306, user=bob, pass=secret, dbname=test"
+    Q2DBDAuthParams "accounts:email:password:10000"
+    Q2AsyncPath "/etc/q2/tmp"
+    Q2PaginationPPG "3"
+    <Location /q2>
+        SetHandler q2
+    </Location>
+</IfModule>
+
+Authentication
+==============
+Example test.accounts table
+---------------------------
+create table accounts (
+    id int primary key not null,
+    email varchar(50) not null,
+    password varchar(50) not null
+    );
+insert into accounts values (1, "bob@example.com", "secret");
+
+File: q2.conf
+----
+Q2DBDAuthParams "accounts:email:password:10000"
+
+PHP
+---
+function hmac_hd($method, $path, $nonce, $date, $user, $pass)
+{
+    $hmac_str = "{$method}+{$path}+".str_replace(' ', '', $date)."+{$nonce}";
+    $hmac = hash_hmac("sha256", $hmac_str, $pass, false);
+    $digest = base64_encode($hmac);
+    return "hmac {$user}:{$nonce}:{$digest}";
+}
+
+$date = "20 apr 2013 12:59:24";
+$hmac = hmac_hd("GET", "/q2/v1/customers", "123456", $date, "bob", "secret");
+
+HTTP headers
+------------
+Authentication: $hmac
+Date: $date

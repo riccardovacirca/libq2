@@ -112,7 +112,6 @@
                                   "Date: %s\r\n\r\n"\
                                   "%s"
 
-#define Q2_REST_WD_HOST           "debian.local"
 #define Q2_REST_WD_PORT           80
 #define Q2_REST_WD_MAX_THREADS    10
 #define Q2_REST_WD_DIROPT         APR_FINFO_DIRENT|APR_FINFO_TYPE|APR_FINFO_NAME
@@ -3311,6 +3310,8 @@ static ap_dbd_t* (*dbd_fn)(request_rec*) = NULL;
 
 typedef struct q2_rest_cfg_t {
     int pagination_ppg;
+    int server_port;
+    const char *hostname;
     const char *auth_params;
     const char *async_path;
 } q2_rest_cfg_t;
@@ -3824,6 +3825,25 @@ static int q2_rest_request_handler(request_rec *r)
     if (!q2_rest_valid_accept(r)) return HTTP_NOT_ACCEPTABLE;
     if (!q2_rest_authorized(r, dbd, cfg)) return HTTP_UNAUTHORIZED;
 
+    cfg->hostname = apr_pstrdup(r->pool, r->server->server_hostname);
+
+    cfg->server_port = r->server->port;
+
+
+    //! ========================================================================
+    //!
+    //! TODO:
+    //!
+    //! int id, status, done;
+    //! if (q2_rest_valid_async_id(r, &id)) {
+    //!     if (!q2_rest_valid_async_status(r, cfg, id, &status))
+    //!         return HTTP_NOT_FOUND;
+    //!     done = q2_rest_async_completed(status);
+    //!     ap_rprintf(r, Q2_REST_ASYNC_STATUS,
+    //!                done ? "Completed." : "In progress..");
+    //!     return OK;
+    //! }
+    //!
     if (cfg->async_path != NULL) {
         const char *async_id = q2_rest_async_id(r, r->unparsed_uri);
         if (async_id != NULL) {
@@ -3838,10 +3858,45 @@ static int q2_rest_request_handler(request_rec *r)
             return OK;
         }
     }
+    //! ========================================================================
 
+    //! ========================================================================
+    //!
+    //! TODO:
+    //!
+    //! typedef struct q2_rest_data_t {
+    //!     apr_table_t *params;
+    //!     const char *rawdata;
+    //!     size_t rawlen;
+    //! } q2_rest_data_t;
+    //! q2_rest_data_t *r_data;
+    //! if (!q2_rest_valid_data(r, &r_data))
+    //!     return HTTP_BAD_REQUEST;
+    //!
     if (!q2_rest_valid_data(r, &params, &rawdata, &rawlen))
         return HTTP_BAD_REQUEST;
+    //! ========================================================================
 
+    //! ========================================================================
+    //! TODO:
+    //!
+    //! q2_rest_data_t *r_data;
+    //! if (q2_rest_valid_async_request(r, Q2_REST_ASYNC_OPEN, NULL)) {
+    //!     const char *async_id;
+    //!     if (q2_rest_async_save_request(r, cfg, r_data, &async_id)) {
+    //!         if (q2_rest_async_save_status(r, cfg, async_id, Q2_REST_ASYNC_PROG)) {
+    //!             q2_rest_set_async_location(r, async_id);
+                    //! ===========================
+                    //!
+                    //! FIXME: return HTTP_ACCEPTED
+                    //!
+                    //! ===========================
+    //!             return OK;
+    //!         }
+    //!     }
+    //!     return HTTP_INTERNAL_SERVER_ERROR;
+    //! }
+    //!
     if (r->method_number != M_GET) {
         const char *async = apr_table_get(r->headers_in, Q2_REST_ASYNC_HEADER);
         if (async != NULL && (strcmp(async, "1") == 0)) {
@@ -3862,12 +3917,18 @@ static int q2_rest_request_handler(request_rec *r)
                     const char *loc = apr_psprintf(r->pool,
                                                    Q2_REST_ASYNC_URI, async_id);
                     apr_table_set(r->headers_out, "Location", loc);
+                    //! ===========================
+                    //!
+                    //! FIXME: return HTTP_ACCEPTED
+                    //!
+                    //! ===========================
                     return OK;
                 }
             }
             return HTTP_INTERNAL_SERVER_ERROR;
         }
     }
+    //! ========================================================================
 
     q2 = q2_initialize(r->pool);
     if (q2 == NULL) {
@@ -3888,12 +3949,22 @@ static int q2_rest_request_handler(request_rec *r)
         return OK;
     }
 
+    //! ========================================================================
+    //!
+    //! TODO:
+    //!
+    //! const char *async_id;
+    //! if (q2_rest_valid_async_request(r, Q2_REST_ASYNC_CLOSE, &async_id))
+    //!     if (q2_rest_async_save_status(r, cfg, async_id, Q2_REST_ASYNC_DONE))
+    //!         return HTTP_NO_CONTENT;
+    //!
     if (r->method_number != M_GET) {
         const char *async = apr_table_get(r->headers_in, Q2_REST_ASYNC_HEADER);
         if (async != NULL && strcmp(async, "1"))
             if (q2_rest_async_save_status(r, cfg, async, "2"))
                 return OK;
     }
+    //! ========================================================================
 
     const char *id, *loc;
     if (r->method_number != M_GET) {
@@ -3902,25 +3973,63 @@ static int q2_rest_request_handler(request_rec *r)
                 if ((id = q2_get_last_id(q2)) != NULL) {
                     loc = apr_psprintf(r->pool, "%s/%s", r->unparsed_uri, id);
                     apr_table_set(r->headers_out, "Location", loc);
+                    //! ==========================
+                    //!
+                    //! FIXME: return HTTP_CREATED
+                    //!
+                    //! ==========================
                     return OK;
                 }
             }
+            //! =========================
+            //!
+            //! FIXME: PUT, PATCH, DELETE
+            //!
+            //! =========================
             return HTTP_NO_CONTENT;
         }
     }
 
+    //! ========================================================================
+    //!
+    //! TODO:
+    //!
+    //! int from, to;
+    //! const char *payload;
+    //! if (q2_rest_valid_range(r, &from, &to)) {
+    //!     if (q2_get_result(q2, 0, NULL, &payload) && payload != NULL) {
+    //!         ap_rprintf(r, "%s", out);
+                //! =========================================
+                //!
+                //! FIXME: partial = substring(out, from, to)
+                //!        ap_rprintf(r, "%s", partial)
+                //!        return OK
+                //!
+                //! =========================================
+    //!         return OK;
+    //!     }
+    //! }
+    //!
     int range_from, range_to;
     const char *partial = NULL;
     if (r->method_number == M_GET) {
         if (q2_rest_range(r, &range_from, &range_to)) {
             if (q2_get_result(q2, 0, NULL, &out)) {
                 if (out != NULL) {
+                    //! =========================================
+                    //!
+                    //! FIXME: partial = substring(out, from, to)
+                    //!        ap_rprintf(r, "%s", partial)
+                    //!        return OK
+                    //!
+                    //! =========================================
                     ap_rprintf(r, "%s", out);
                     return OK;
                 }
             }
         }
     }
+    //! ========================================================================
 
     out = q2_encode_json(q2);
 
@@ -4023,6 +4132,7 @@ static int q2_rest_aysnc_get_proc(q2_rest_cfg_t *cfg, apr_pool_t *mp)
     apr_finfo_t dirent;
     apr_file_t *fh;
     q2_rest_url_data_t *d;
+    if (cfg->hostname == NULL || cfg->server_port == 0) return 0;
     if ((rv = apr_pool_create(&pool, mp)) == APR_SUCCESS) {
         dirpath = apr_pstrdup(pool, cfg->async_path);
         char tmp[256];
@@ -4039,8 +4149,8 @@ static int q2_rest_aysnc_get_proc(q2_rest_cfg_t *cfg, apr_pool_t *mp)
                             d = (q2_rest_url_data_t*)apr_palloc(t_pool, sizeof(q2_rest_url_data_t));
                             if (d != NULL) {
                                 d->pool = t_pool;
-                                d->server = apr_pstrdup(t_pool, Q2_REST_WD_HOST);
-                                d->port = Q2_REST_WD_PORT;
+                                d->server = apr_pstrdup(t_pool, cfg->hostname);
+                                d->port = cfg->server_port;
                                 d->async_id = (char*)apr_pstrdup(t_pool, dirent.name);
                                 d->data = apr_array_make(t_pool, 6, sizeof(const char*));
                                 while ((rv = apr_file_eof(fh)) == APR_SUCCESS) {
@@ -4112,38 +4222,52 @@ static void q2_rest_register_hooks(apr_pool_t *p)
 static void *q2_rest_create_config(apr_pool_t *p, server_rec *s)
 {
     q2_rest_cfg_t *cfg = (q2_rest_cfg_t*)apr_pcalloc(p, sizeof(q2_rest_cfg_t));
+    cfg->hostname = NULL;
+    cfg->server_port = 0;
     cfg->async_path = NULL;
     cfg->auth_params = NULL;
     cfg->pagination_ppg = 0;
     return cfg;
 }
 
-static const char *q2_rest_cmd_auth(cmd_parms *cmd, void *dconf, const char *auth)
+static const char *q2_rest_cmd_auth(cmd_parms *cmd,
+                                    void *dconf,
+                                    const char *auth)
 {
-    q2_rest_cfg_t *cfg = (q2_rest_cfg_t*)ap_get_module_config(cmd->server->module_config,
-                                                    &q2_module);
-    const char *err = ap_check_cmd_context(cmd, NOT_IN_DIR_CONTEXT);
-    if (err != NULL) return err;
+    q2_rest_cfg_t *cfg;
+    const char *er;
+    cfg = (q2_rest_cfg_t*)ap_get_module_config(cmd->server->module_config,
+                                               &q2_module);
+    er = ap_check_cmd_context(cmd, NOT_IN_DIR_CONTEXT);
+    if (er != NULL) return er;
     if (cfg->auth_params == NULL) cfg->auth_params = auth;
     return NULL;
 }
 
-static const char *q2_rest_cmd_async(cmd_parms *cmd, void *dconf, const char *async)
+static const char *q2_rest_cmd_async(cmd_parms *cmd,
+                                     void *dconf,
+                                     const char *async_path)
 {
-    q2_rest_cfg_t *cfg = (q2_rest_cfg_t*)ap_get_module_config(cmd->server->module_config,
-                                                    &q2_module);
-    const char *err = ap_check_cmd_context(cmd, NOT_IN_DIR_CONTEXT);
-    if (err != NULL) return err;
-    if (cfg->async_path == NULL) cfg->async_path = async;
+    q2_rest_cfg_t *cfg;
+    const char *er;
+    cfg = (q2_rest_cfg_t*)ap_get_module_config(cmd->server->module_config,
+                                               &q2_module);
+    er = ap_check_cmd_context(cmd, NOT_IN_DIR_CONTEXT);
+    if (er != NULL) return er;
+    if (cfg->async_path == NULL) cfg->async_path = async_path;
     return NULL;
 }
 
-static const char *q2_rest_cmd_ppg(cmd_parms *cmd, void *dconf, const char *ppg)
+static const char *q2_rest_cmd_ppg(cmd_parms *cmd,
+                                   void *dconf,
+                                   const char *ppg)
 {
-    q2_rest_cfg_t *cfg = (q2_rest_cfg_t*)ap_get_module_config(cmd->server->module_config,
-                                                    &q2_module);
-    const char *err = ap_check_cmd_context(cmd, NOT_IN_DIR_CONTEXT);
-    if (err != NULL) return err;
+    q2_rest_cfg_t *cfg;
+    const char *er;
+    cfg = (q2_rest_cfg_t*)ap_get_module_config(cmd->server->module_config,
+                                               &q2_module);
+    er = ap_check_cmd_context(cmd, NOT_IN_DIR_CONTEXT);
+    if (er != NULL) return er;
     cfg->pagination_ppg = atoi(ppg);
     return NULL;
 }
@@ -4167,4 +4291,3 @@ AP_DECLARE_MODULE(q2) = {
     q2_rest_cmds,
     q2_rest_register_hooks
 };
-

@@ -37,6 +37,7 @@ Install and configure (Debian, MySQL)
 =====================================
 $ sudo apxs -i -S LIBEXECDIR=`apxs -q LIBEXECDIR` -n mod_q2.so mod_q2.la
 $ sudo mkdir -p /etc/q2/tmp
+$ sudo chown -R www-data:www-data /etc/q2/tmp
 
 File: /etc/apache2/mods-available/q2.load
 ----
@@ -47,6 +48,8 @@ File: /etc/apache2/mods-available/q2.conf
 <IfModule q2_module>
     DBDriver  "mysql"
     DBDParams "host=localhost, port=3306, user=bob, pass=secret, dbname=test"
+    Q2ServerName "localhost"
+    Q2ServerPort "80"
     Q2DBDAuthParams "accounts:email:password:10000"
     Q2AsyncPath "/etc/q2/tmp"
     Q2PaginationPPG "3"

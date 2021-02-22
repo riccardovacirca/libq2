@@ -3825,10 +3825,8 @@ static int q2_rest_request_handler(request_rec *r)
     if (!q2_rest_valid_accept(r)) return HTTP_NOT_ACCEPTABLE;
     if (!q2_rest_authorized(r, dbd, cfg)) return HTTP_UNAUTHORIZED;
 
-    cfg->hostname = apr_pstrdup(r->pool, r->server->server_hostname);
-
-    cfg->server_port = r->server->port;
-
+    // cfg->hostname = apr_pstrdup(r->pool, r->server->server_hostname);
+    // cfg->server_port = r->server->port;
 
     //! ========================================================================
     //!
@@ -4060,7 +4058,6 @@ static int q2_rest_request_handler(request_rec *r)
         }
     }
 
-
     ap_rprintf(r, "%s", payload);
     return OK;
 }
@@ -4103,7 +4100,7 @@ static void *q2_rest_thread(void *t_data)
     q2_rest_url_data_t *d;
     const char *data, *tmp;
     apr_time_t inizio = apr_time_now();
-    apr_sleep(15 * Q2_REST_WD_SECOND);
+    apr_sleep(3 * Q2_REST_WD_SECOND);
     d = (q2_rest_url_data_t *)t_data;
     data = "";
     for (int i = 0; i < d->data->nelts; i++) {
@@ -4121,6 +4118,58 @@ end:
     pthread_exit(0);
 }
 
+// static int q2_rest_aysnc_get_proc(q2_rest_cfg_t *cfg, apr_pool_t *mp)
+// {
+//     const char *dirpath;
+//     const char *fname;
+//     pthread_t tid;
+//     apr_status_t rv;
+//     apr_pool_t *pool;
+//     apr_dir_t *dir;
+//     apr_finfo_t dirent;
+//     apr_file_t *fh;
+//     q2_rest_url_data_t *d;
+//     if (cfg->hostname == NULL || cfg->server_port == 0) return 0;
+//     if ((rv = apr_pool_create(&pool, mp)) == APR_SUCCESS) {
+//         dirpath = apr_pstrdup(pool, cfg->async_path);
+//         char tmp[256];
+//         if ((rv = apr_dir_open(&dir, dirpath, pool)) == APR_SUCCESS) {
+//             while ((apr_dir_read(&dirent, Q2_REST_WD_DIROPT, dir)) == APR_SUCCESS) {
+//                 if (dirent.filetype == APR_REG) {
+//                     if (dirent.name[0] == '_') continue;
+//                     fname = apr_pstrcat(pool, dirpath, "/", dirent.name, NULL);
+//                     rv = apr_file_open(&fh, fname, APR_FOPEN_READ, APR_OS_DEFAULT, pool);
+//                     if (rv == APR_SUCCESS) {
+//                         apr_pool_t *t_pool;
+//                         rv = apr_pool_create(&t_pool, NULL);
+//                         if (rv == APR_SUCCESS) {
+//                             d = (q2_rest_url_data_t*)apr_palloc(t_pool, sizeof(q2_rest_url_data_t));
+//                             if (d != NULL) {
+//                                 d->pool = t_pool;
+//                                 d->server = apr_pstrdup(t_pool, cfg->hostname);
+//                                 d->port = cfg->server_port;
+//                                 d->async_id = (char*)apr_pstrdup(t_pool, dirent.name);
+//                                 d->data = apr_array_make(t_pool, 6, sizeof(const char*));
+//                                 while ((rv = apr_file_eof(fh)) == APR_SUCCESS) {
+//                                     if ((rv = apr_file_gets(tmp, 256, fh)) == APR_SUCCESS) {
+//                                         APR_ARRAY_PUSH(d->data, const char*) = apr_pstrdup(t_pool, tmp);
+//                                     }
+//                                 }
+//                             }
+//                         }
+//                         apr_file_close(fh);
+//                         apr_file_remove(fname, pool);
+//                         pthread_create(&tid, NULL, q2_rest_thread, (void*)d);
+//                     }
+//                 }
+//             }
+//             apr_dir_close(dir);
+//         }
+//         apr_pool_destroy(pool);
+//     }
+//     return 0;
+// }
+
 static int q2_rest_aysnc_get_proc(q2_rest_cfg_t *cfg, apr_pool_t *mp)
 {
     const char *dirpath;
@@ -4128,48 +4177,47 @@ static int q2_rest_aysnc_get_proc(q2_rest_cfg_t *cfg, apr_pool_t *mp)
     pthread_t tid;
     apr_status_t rv;
     apr_pool_t *pool;
+    apr_pool_t *t_pool;
     apr_dir_t *dir;
     apr_finfo_t dirent;
     apr_file_t *fh;
     q2_rest_url_data_t *d;
-    if (cfg->hostname == NULL || cfg->server_port == 0) return 0;
-    if ((rv = apr_pool_create(&pool, mp)) == APR_SUCCESS) {
-        dirpath = apr_pstrdup(pool, cfg->async_path);
-        char tmp[256];
-        if ((rv = apr_dir_open(&dir, dirpath, pool)) == APR_SUCCESS) {
-            while ((apr_dir_read(&dirent, Q2_REST_WD_DIROPT, dir)) == APR_SUCCESS) {
-                if (dirent.filetype == APR_REG) {
-                    if (dirent.name[0] == '_') continue;
-                    fname = apr_pstrcat(pool, dirpath, "/", dirent.name, NULL);
-                    rv = apr_file_open(&fh, fname, APR_FOPEN_READ, APR_OS_DEFAULT, pool);
-                    if (rv == APR_SUCCESS) {
-                        apr_pool_t *t_pool;
-                        rv = apr_pool_create(&t_pool, NULL);
-                        if (rv == APR_SUCCESS) {
-                            d = (q2_rest_url_data_t*)apr_palloc(t_pool, sizeof(q2_rest_url_data_t));
-                            if (d != NULL) {
-                                d->pool = t_pool;
-                                d->server = apr_pstrdup(t_pool, cfg->hostname);
-                                d->port = cfg->server_port;
-                                d->async_id = (char*)apr_pstrdup(t_pool, dirent.name);
-                                d->data = apr_array_make(t_pool, 6, sizeof(const char*));
-                                while ((rv = apr_file_eof(fh)) == APR_SUCCESS) {
-                                    if ((rv = apr_file_gets(tmp, 256, fh)) == APR_SUCCESS) {
-                                        APR_ARRAY_PUSH(d->data, const char*) = apr_pstrdup(t_pool, tmp);
-                                    }
-                                }
-                            }
+    char tmp[256];
+    if (cfg->hostname == NULL || cfg->server_port == 0) goto end;
+    if ((rv = apr_pool_create(&pool, mp)) != APR_SUCCESS) goto end;
+    dirpath = apr_pstrdup(pool, cfg->async_path);
+    if ((rv = apr_dir_open(&dir, dirpath, pool)) != APR_SUCCESS) goto release;
+    while ((apr_dir_read(&dirent, Q2_REST_WD_DIROPT, dir)) == APR_SUCCESS) {
+        if (dirent.filetype == APR_REG && dirent.name[0] != '_') {
+            fname = apr_pstrcat(pool, dirpath, "/", dirent.name, NULL);
+            rv = apr_file_open(&fh, fname, APR_FOPEN_READ, APR_OS_DEFAULT, pool);
+            if (rv != APR_SUCCESS) continue;
+            if (apr_pool_create(&t_pool, NULL) == APR_SUCCESS) {
+                d = (q2_rest_url_data_t*)apr_palloc(t_pool,
+                                                    sizeof(q2_rest_url_data_t));
+                if (d != NULL) {
+                    d->pool = t_pool;
+                    d->server = apr_pstrdup(t_pool, cfg->hostname);
+                    d->port = cfg->server_port;
+                    d->async_id = (char*)apr_pstrdup(t_pool, dirent.name);
+                    d->data = apr_array_make(t_pool, 6, sizeof(const char*));
+                    while ((rv = apr_file_eof(fh)) == APR_SUCCESS) {
+                        if ((rv = apr_file_gets(tmp, 256, fh)) == APR_SUCCESS) {
+                            APR_ARRAY_PUSH(d->data, const char*) =
+                                apr_pstrdup(t_pool, tmp);
                         }
-                        apr_file_close(fh);
-                        apr_file_remove(fname, pool);
-                        pthread_create(&tid, NULL, q2_rest_thread, (void*)d);
                     }
                 }
             }
-            apr_dir_close(dir);
+            apr_file_close(fh);
+            apr_file_remove(fname, pool);
+            pthread_create(&tid, NULL, q2_rest_thread, (void*)d);
         }
-        apr_pool_destroy(pool);
     }
+    apr_dir_close(dir);
+release:
+    apr_pool_destroy(pool);
+end:
     return 0;
 }
 
@@ -4230,6 +4278,34 @@ static void *q2_rest_create_config(apr_pool_t *p, server_rec *s)
     return cfg;
 }
 
+static const char *q2_rest_cmd_server_name(cmd_parms *cmd,
+                                           void *dconf,
+                                           const char *server_name)
+{
+    q2_rest_cfg_t *cfg;
+    const char *er;
+    cfg = (q2_rest_cfg_t*)ap_get_module_config(cmd->server->module_config,
+                                               &q2_module);
+    er = ap_check_cmd_context(cmd, NOT_IN_DIR_CONTEXT);
+    if (er != NULL) return er;
+    if (cfg->hostname == NULL) cfg->hostname = server_name;
+    return NULL;
+}
+
+static const char *q2_rest_cmd_server_port(cmd_parms *cmd,
+                                           void *dconf,
+                                           const char *server_port)
+{
+    q2_rest_cfg_t *cfg;
+    const char *er;
+    cfg = (q2_rest_cfg_t*)ap_get_module_config(cmd->server->module_config,
+                                               &q2_module);
+    er = ap_check_cmd_context(cmd, NOT_IN_DIR_CONTEXT);
+    if (er != NULL) return er;
+    if (cfg->server_port == 0) cfg->server_port = atoi(server_port);
+    return NULL;
+}
+
 static const char *q2_rest_cmd_auth(cmd_parms *cmd,
                                     void *dconf,
                                     const char *auth)
@@ -4273,6 +4349,10 @@ static const char *q2_rest_cmd_ppg(cmd_parms *cmd,
 }
 
 static const command_rec q2_rest_cmds[] = {
+    AP_INIT_TAKE1("Q2ServerName", q2_rest_cmd_server_name, NULL, RSRC_CONF,
+                  "REST server name"),
+    AP_INIT_TAKE1("Q2ServerPort", q2_rest_cmd_server_port, NULL, RSRC_CONF,
+                  "REST server port"),
     AP_INIT_TAKE1("Q2DBDAuthParams", q2_rest_cmd_auth, NULL, RSRC_CONF,
                   "Enable HMAC authentication"),
     AP_INIT_TAKE1("Q2AsyncPath", q2_rest_cmd_async, NULL, RSRC_CONF,

@@ -4176,7 +4176,7 @@ static void *q2_rest_thread(void *t_data)
     q2_rest_url_data_t *d;
     const char *data, *tmp;
     apr_time_t inizio = apr_time_now();
-    apr_sleep(3 * Q2_REST_WD_SECOND);
+    apr_sleep(1 * Q2_REST_WD_SECOND);
     d = (q2_rest_url_data_t *)t_data;
     data = "";
     for (int i = 0; i < d->data->nelts; i++) {

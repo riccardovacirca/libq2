@@ -79,7 +79,11 @@
                                   "\"sql\":%s,"                                \
                                   "\"attributes\":%s,"                         \
                                   "\"results\":%s,"                            \
-                                  "\"next\":%s,"                               \
+                                  "\"pagination\":{"                           \
+                                  "\"total_rows\":%d,"                         \
+                                  "\"prev\":%s,"                               \
+                                  "\"next\":%s"                                \
+                                  "},"                                         \
                                   "\"affected_rows\":%d,"                      \
                                   "\"last_insert_id\":%s"                      \
                                   "}"
@@ -224,8 +228,12 @@ typedef struct q2_t {
     q2_id_last_fn_t id_last_fn;
     q2_db_vers_fn_t db_vers_fn;
     const char *dbd_server_version;
-    int next_page;
-    const char *next;
+    int pagination_offset;
+    const char *pagination_next;
+    const char *pagination_prev;
+    const char *pagination_curr;
+    int pagination_total_rows;
+    int pagination_total_pages;
     apr_array_header_t *uri_tables;
     apr_array_header_t *uri_keys;
     const char *table;
@@ -286,7 +294,7 @@ static int q2_is_float(const char *v)
 
 static int q2_in_string(const char *s, char v)
 {
-    for (int i = 0; i < strlen(s); i ++)
+    for (int i = 0; i < strlen(s); i++)
         if (s[i] == v) return 1;
     return 0;
 }
@@ -339,7 +347,7 @@ static char* q2_join(apr_pool_t *mp, apr_array_header_t *arr, const char *sep)
     char *item = NULL;
     apr_array_header_t *tmp = NULL;
     if (mp == NULL || arr == NULL || arr->nelts <= 0) return NULL;
-    for (int i = 0; i<arr->nelts; i ++) {
+    for (int i = 0; i<arr->nelts; i++) {
         item = APR_ARRAY_IDX(arr, i, char*);
         if (item != NULL) {
             if (tmp == NULL) {
@@ -362,7 +370,7 @@ static int q2_args_to_table(apr_pool_t *mp, apr_table_t **tab, const char *args)
     if (args == NULL || strlen(args) <= 0) return 1;
     qs_arr = q2_split(mp, args, "&");
     if (qs_arr->nelts <= 0) return 1;
-    for (int i = 0; i < qs_arr->nelts; i ++) {
+    for (int i = 0; i < qs_arr->nelts; i++) {
         item = APR_ARRAY_IDX(qs_arr, i, void*);
         qs_pair = q2_split(mp, item, "=");
         if (qs_pair->nelts < 2) return 1;
@@ -381,7 +389,7 @@ static const char* q2_table_to_args(apr_pool_t *mp, apr_table_t *table)
     apr_array_header_t *retv = apr_array_make(mp, 0, sizeof(char*));
     if (table != NULL) {
         if ((apr_table_elts(table))->nelts > 0) {
-            for (int i = 0; i < (apr_table_elts(table))->nelts; i ++) {
+            for (int i = 0; i < (apr_table_elts(table))->nelts; i++) {
                 apr_table_entry_t *e =
                     &((apr_table_entry_t*)((apr_table_elts(table))->elts))[i];
                 APR_ARRAY_PUSH(retv, char*) = apr_psprintf(mp, "%s=%s",
@@ -403,7 +411,7 @@ static char* q2_array_pstrcat(apr_pool_t *mp,
     apr_array_header_t *tmp;
     limit = arr->nelts - 1;
     tmp = apr_array_make(mp, 0, sizeof(void*));
-    for (int i = 0; i < arr->nelts; i ++) {
+    for (int i = 0; i < arr->nelts; i++) {
         item = APR_ARRAY_IDX(arr, i, char*);
         if (item != NULL) {
             APR_ARRAY_PUSH(tmp, char*) = apr_pstrdup(mp, item);
@@ -460,7 +468,7 @@ static const char* q2_json_table(apr_pool_t *mp, apr_table_t *t)
     if ((len = (apr_table_elts(t))->nelts) <= 0) return NULL;
     if ((arr = apr_array_make(mp, len, sizeof(const char*))) == NULL)
         return NULL;
-    for (int i = 0; i < len; i ++) {
+    for (int i = 0; i < len; i++) {
         apr_table_entry_t *e =
             &((apr_table_entry_t*)((apr_table_elts(t))->elts))[i];
         APR_ARRAY_PUSH(arr, const char*) =
@@ -476,7 +484,7 @@ static const char* q2_json_array(apr_pool_t *mp, apr_array_header_t *a, int tp)
     void *v = NULL;
     if (a == NULL || a->nelts <= 0) return NULL;
     arr = apr_array_make(mp, a->nelts, sizeof(const char*));
-    for (int i = 0; i < a->nelts; i ++) {
+    for (int i = 0; i < a->nelts; i++) {
         v = APR_ARRAY_IDX(a, i, void*);
         switch (tp)
         {
@@ -497,7 +505,7 @@ static void q2_table_rprintf(void *ctx, apr_table_t *table)
 {
     if (table != NULL) {
         if ((apr_table_elts(table))->nelts > 0) {
-            for (int i = 0; i < (apr_table_elts(table))->nelts; i ++) {
+            for (int i = 0; i < (apr_table_elts(table))->nelts; i++) {
                 apr_table_entry_t *e =
                     &((apr_table_entry_t*)((apr_table_elts(table))->elts))[i];
                 #ifdef _APMOD
@@ -513,7 +521,7 @@ static void q2_table_rprintf(void *ctx, apr_table_t *table)
 static void q2_array_rprintf(void *ctx, apr_array_header_t *arr, int tp)
 {
     if (arr != NULL && arr->nelts > 0) {
-        for (int i = 0; i < arr->nelts; i ++) {
+        for (int i = 0; i < arr->nelts; i++) {
             switch(tp)
             {
             case Q2_STRING:
@@ -571,7 +579,7 @@ static apr_array_header_t* q2_dbd_select(apr_pool_t *mp,
             first_rec = 0;
         }
         rec = apr_table_make(mp, num_fields);
-        for (int i = 0; i < num_fields; i ++) {
+        for (int i = 0; i < num_fields; i++) {
             const char *k = apr_dbd_get_name(drv, res, i);
             const char *v = apr_dbd_get_entry(drv, row, i);
             apr_table_setn(rec, apr_pstrdup(mp, k),
@@ -1156,7 +1164,7 @@ static apr_array_header_t* q2_sqlt3_cl_name(apr_pool_t *mp,
     if (sql == NULL) return NULL;
     res = q2_dbd_select(mp, dbd_drv, dbd_hd, sql, er);
     if (res == NULL || res->nelts <= 0) return NULL;
-    for (int i = 0; i < res->nelts; i ++) {
+    for (int i = 0; i < res->nelts; i++) {
         tab = APR_ARRAY_IDX(res, i, apr_table_t*);
         col = apr_table_get(tab, "name");
         if (col == NULL) continue;
@@ -1212,7 +1220,7 @@ static apr_array_header_t* q2_sqlt3_pk_attr(apr_pool_t *mp,
     if (res == NULL || res->nelts <= 0) return NULL;
     retv = apr_array_make(mp, 1, sizeof(apr_table_t*));
     if (retv == NULL) return NULL;
-    for (int i = 0; i < res->nelts; i ++) {
+    for (int i = 0; i < res->nelts; i++) {
         tab = APR_ARRAY_IDX(res, i, apr_table_t*);
         if ((attrib = apr_table_get(tab, "pk")) == NULL) continue;
         if (atoi(attrib)) {
@@ -1325,21 +1333,21 @@ static const char* q2_sqlt3_getvers(apr_pool_t *mp,
 }
 #endif
 
-static int q2_uri_get_pages(apr_pool_t *mp, apr_array_header_t *apr_uri_t)
+static int q2_uri_get_pag_offset(apr_pool_t *mp, apr_array_header_t *apr_uri_t)
 {
-    int page;
-    const char *next, *page_s;
+    int offset;
+    const char *next_s, *offset_s;
     if (apr_uri_t->nelts < 5) return 0;
-    page_s = APR_ARRAY_IDX(apr_uri_t, apr_uri_t->nelts-1, const char*);
-    if (page_s == NULL) return 0;
-    if (q2_is_integer(page_s)) {
-        page = atoi(page_s);
-        if (page > 0) {
-            next = APR_ARRAY_IDX(apr_uri_t, apr_uri_t->nelts-2, const char*);
-            if (strncasecmp(next, "next", 4) == 0) {
-                apr_array_pop(apr_uri_t);  //! remove the page number
+    offset_s = APR_ARRAY_IDX(apr_uri_t, apr_uri_t->nelts-1, const char*);
+    if (offset_s == NULL) return 0;
+    if (q2_is_integer(offset_s)) {
+        offset = atoi(offset_s);
+        if (offset > 0) {
+            next_s = APR_ARRAY_IDX(apr_uri_t, apr_uri_t->nelts-2, const char*);
+            if (strncasecmp(next_s, "next", 4) == 0) {
+                apr_array_pop(apr_uri_t);  //! remove the offset number
                 apr_array_pop(apr_uri_t);  //! remove 'next'
-                return page;               //! returns the page number
+                return offset;             //! returns the offset number
             }
         }
     }
@@ -1352,7 +1360,7 @@ static apr_array_header_t* q2_uri_get_tabs(apr_pool_t *mp,
     const char *path_i = NULL;
     apr_array_header_t *retv = NULL;
     if (apr_uri_t == NULL || apr_uri_t->nelts < 3) return NULL;
-    for (int i = 2; i < apr_uri_t->nelts; i ++) {
+    for (int i = 2; i < apr_uri_t->nelts; i++) {
         path_i = APR_ARRAY_IDX(apr_uri_t, i, const char*);
         if (path_i == NULL) continue;
         if (q2_is_integer(path_i)) continue;
@@ -1372,7 +1380,7 @@ static apr_array_header_t* q2_uri_get_keys(apr_pool_t *mp,
     const char *path_i = NULL;
     apr_array_header_t *retv = NULL;
     if (apr_uri_t == NULL || apr_uri_t->nelts < 3) return NULL;
-    for (int i = 2; i < apr_uri_t->nelts; i ++) {
+    for (int i = 2; i < apr_uri_t->nelts; i++) {
         path_i = APR_ARRAY_IDX(apr_uri_t, i, const char*);
         if (path_i == NULL) continue;
         if ((i-1) % 2 == 0) {
@@ -1398,7 +1406,7 @@ static const char* q2_ischema_pgsql_get_target_table_mm(q2_t *q2)
                          apr_dbd_error(q2->dbd_driver, q2->dbd_handle, er));
     if (mul_fk_tabs == NULL) return NULL;
     if (mul_fk_tabs->nelts > 0) {
-        for (int i = 0; i < mul_fk_tabs->nelts; i ++) {
+        for (int i = 0; i < mul_fk_tabs->nelts; i++) {
             tab_n_fk = atoi(q2_dbd_get_value(mul_fk_tabs, i, "count"));
             if (tab_n_fk < 2) continue;
             mul_fk_tab_name = q2_dbd_get_value(mul_fk_tabs, i, "name");
@@ -1453,7 +1461,7 @@ static const char* q2_ischema_get_target_table(q2_t *q2, int rel)
         if (rset_fk == NULL) return NULL;
         if (rset_fk->nelts <= 0) return NULL;
         count = 0;
-        for (int i = 0; i < rset_pk->nelts; i ++) {
+        for (int i = 0; i < rset_pk->nelts; i++) {
             for (int j = 0; j < rset_fk->nelts; j ++) {
                 const char *pk_name = q2_dbd_get_value(rset_pk, i, "column_name");
                 const char *fk_name = q2_dbd_get_value(rset_fk, i, "column_name");
@@ -1462,7 +1470,7 @@ static const char* q2_ischema_get_target_table(q2_t *q2, int rel)
         }
         if (count != rset_pk->nelts || count != rset_fk->nelts) return NULL;
         count = 0;
-        for (int i = 0; i < rset_fk->nelts; i ++) {
+        for (int i = 0; i < rset_fk->nelts; i++) {
             const char *dbs_tab;
             dbs_tab = q2_dbd_get_value(rset_fk, i, "referenced_table");
             for (int j = 0; j < q2->uri_tables->nelts-1; j ++) {
@@ -1486,7 +1494,7 @@ static const char* q2_ischema_get_target_table(q2_t *q2, int rel)
                              apr_dbd_error(q2->dbd_driver, q2->dbd_handle, er));
         if (rset == NULL) return NULL;
         count = 0;
-        for (int i = 0; i < rset->nelts; i ++) {
+        for (int i = 0; i < rset->nelts; i++) {
             rtname = q2_dbd_get_value(rset, i, "referenced_table");
             for (int j = 0; j < q2->uri_tables->nelts; j ++) {
                 if (strcmp(rtname, table) != 0) {
@@ -1514,7 +1522,7 @@ static const char* q2_ischema_get_target_table(q2_t *q2, int rel)
         if (er) q2_log_error(q2, "%s",
                              apr_dbd_error(q2->dbd_driver, q2->dbd_handle, er));
         if (rset == NULL) return NULL;
-        for (int i = 0; i < rset->nelts; i ++) {
+        for (int i = 0; i < rset->nelts; i++) {
             tname = q2_dbd_get_value(rset, i, "table_name");
             rset_ = q2->fk_attr_fn(q2->pool, q2->dbd_driver,
                                        q2->dbd_handle, tname, &er);
@@ -1625,7 +1633,7 @@ static apr_array_header_t* q2_ischema_get_refs_attrs(q2_t *q2, const char *tab)
 static int q2_ischema_update_attrs(q2_t *q2)
 {
     const char *c_name, *c_pk_name, *c_uns_name, *c_rf_name;
-    for (int i = 0; i < q2->attributes->nelts; i ++) {
+    for (int i = 0; i < q2->attributes->nelts; i++) {
         c_name = q2_dbd_get_value(q2->attributes, i, "column_name");
         if (c_name == NULL) continue;
         if (q2->pk_attrs != NULL && q2->pk_attrs->nelts > 0) {
@@ -1695,7 +1703,7 @@ static int q2_ischema_update_options_attr(q2_t*q2)
     char *qs, *col_opt_uri;
     if (q2->attributes == NULL || q2->attributes->nelts <= 0) return 1;
     qs_cmps = NULL;
-    for (int i = 0; i < q2->attributes->nelts; i ++) {
+    for (int i = 0; i < q2->attributes->nelts; i++) {
         ref_schema = q2_dbd_get_value(q2->attributes, i, "referenced_schema");
         ref_table = q2_dbd_get_value(q2->attributes, i, "referenced_table");
         ref_column = q2_dbd_get_value(q2->attributes, i, "referenced_column");
@@ -1777,7 +1785,7 @@ static apr_table_t* q2_request_parse_params(q2_t* q2)
     apr_table_t *r_params_merge, *retv;
     if (q2->attributes == NULL || q2->request_params == NULL) return NULL;
     if ((retv = apr_table_make(q2->pool, 0)) == NULL) return NULL;
-    for (int i = 0; i < q2->attributes->nelts; i ++) {
+    for (int i = 0; i < q2->attributes->nelts; i++) {
         ckey = q2_dbd_get_value(q2->attributes, i, "column_name");
         if (ckey == NULL) continue;
         cval = apr_table_get(q2->request_params, ckey);
@@ -1787,7 +1795,7 @@ static apr_table_t* q2_request_parse_params(q2_t* q2)
     if (q2->tab_relation != Q2_RL_MMREL) return retv;
     if (q2->uri_tables == NULL) return retv;
     if (q2->uri_tables->nelts <= 0) return retv;
-    for (int i = 0; i < q2->uri_tables->nelts; i ++) {
+    for (int i = 0; i < q2->uri_tables->nelts; i++) {
         const char *t_name = APR_ARRAY_IDX(q2->uri_tables, i, const char*);
         if (strcmp(t_name, q2->table) == 0) continue;
         apr_array_header_t *col_attrs_merge =
@@ -1826,7 +1834,7 @@ static const char* q2_sql_encode_value(q2_t *q2,
         character_set_name = apr_table_get(attrs, "character_set_name");
     tmp_v = apr_pstrdup(q2->pool, val);
     value_len = strlen(val);
-    for (int i = 0; i < value_len; i ++)
+    for (int i = 0; i < value_len; i++)
         if (tmp_v[i] == '*') tmp_v[i] = '%';
     if (is_numeric || q2_is_null_s(tmp_v))
         return apr_psprintf(q2->pool, "%s", tmp_v);
@@ -1914,7 +1922,7 @@ static const char* q2_sql_parse_value(q2_t *q2, apr_table_t *attrs,
             if (set_toks->nelts > 0) {
                 apr_array_header_t *tmp =
                     apr_array_make(q2->pool, 1, sizeof(const char*));
-                for (int i = 0; i < set_toks->nelts; i ++) {
+                for (int i = 0; i < set_toks->nelts; i++) {
                     const char *cur_v = APR_ARRAY_IDX(set_toks, i, const char*);
                     encoded_v = q2_sql_encode_value(q2, attrs, cur_v);
                     if (q2_is_null_s(encoded_v))
@@ -1951,7 +1959,7 @@ static const char* q2_sql_key_conds(q2_t *q2)
         pk_conds = NULL;
         pk_conds_s = NULL;
         if (q2->uri_tables->nelts > 1) {
-            for (int i = 0; i < q2->uri_tables->nelts-1; i ++) {
+            for (int i = 0; i < q2->uri_tables->nelts-1; i++) {
                 curr_uri_tab = APR_ARRAY_IDX(q2->uri_tables, i, const char*);
                 if (curr_uri_tab == NULL) continue;
                 for (int j = 0; j < q2->attributes->nelts; j ++) {
@@ -1980,7 +1988,7 @@ static const char* q2_sql_key_conds(q2_t *q2)
             }
         }
         else if (q2->uri_tables->nelts == 1) {
-            for (int i = 0; i < q2->attributes->nelts; i ++) {
+            for (int i = 0; i < q2->attributes->nelts; i++) {
                 const char *is_pk = q2_dbd_get_value(q2->attributes,
                                                      0, "is_primary_key");
                 if (is_pk == NULL || !(unsigned char)atoi(is_pk)) continue;
@@ -2030,15 +2038,16 @@ static const char* q2_sql_select_tab(q2_t *q2)
 {
     const char *sql, *limit;
     unsigned char ok = (unsigned char)(q2->uri_tables != NULL &&
-                         q2->uri_tables->nelts == 1 &&
-                         q2->uri_keys == NULL && q2->table != NULL &&
-                         q2->column == NULL && q2->r_params == NULL);
+                                       q2->uri_tables->nelts == 1 &&
+                                       q2->uri_keys == NULL &&
+                                       q2->table != NULL &&
+                                       q2->column == NULL &&
+                                       q2->r_params == NULL);
     if(!ok) return NULL;
-
     limit = NULL;
     if (q2->dbd_server_type == Q2_DBD_MSSQL) {
         const char *pk_name = NULL;
-        for (int i = 0; i < q2->attributes->nelts; i ++) {
+        for (int i = 0; i < q2->attributes->nelts; i++) {
             int is_pk = (unsigned char)atoi(q2_dbd_get_value(q2->attributes,
                                                              i,
                                                              "is_primary_key"));
@@ -2049,21 +2058,21 @@ static const char* q2_sql_select_tab(q2_t *q2)
             q2_log_error(q2, "%s", "Primary key not found");
             return NULL;
         }
-        limit = apr_psprintf(q2->pool,
-                             "ORDER BY %s OFFSET %d ROWS FETCH NEXT %d ROWS ONLY",
-                             pk_name, q2->next_page, q2->pagination_ppg);
+        limit = apr_psprintf(q2->pool, "ORDER BY %s OFFSET %d "
+                                       "ROWS FETCH NEXT %d ROWS ONLY",
+                             pk_name, q2->pagination_offset, q2->pagination_ppg);
     }
     if (q2->dbd_server_type == Q2_DBD_PGSQL ||
         q2->dbd_server_type == Q2_DBD_SQLT3)
     {
         limit = apr_psprintf(q2->pool,
                              "LIMIT %d OFFSET %d",
-                             q2->pagination_ppg, q2->next_page);
+                             q2->pagination_ppg, q2->pagination_offset);
     }
     if (q2->dbd_server_type == Q2_DBD_MYSQL && q2->pagination_ppg) {
         limit = apr_psprintf(q2->pool,
-                             "LIMIT %d,%d",
-                             q2->next_page, q2->pagination_ppg);
+                             "LIMIT %d, %d",
+                             q2->pagination_offset, q2->pagination_ppg);
     }
     sql = apr_psprintf(q2->pool, "SELECT * FROM %s", q2->table);
     q2->query_num_rows = q2_count_rows(q2, sql);
@@ -2099,10 +2108,9 @@ static const char* q2_sql_select_tab_col(q2_t *q2)
                   q2->table != NULL && q2->column != NULL &&
                   q2->r_params == NULL);
     if (!ok) return NULL;
-
     pks_ar = NULL;
     uri_column_is_pk = 0;
-    for (int i = 0; i < q2->attributes->nelts; i ++) {
+    for (int i = 0; i < q2->attributes->nelts; i++) {
         is_pk = (unsigned char)atoi(q2_dbd_get_value(q2->attributes, i, "is_primary_key"));
         if (!is_pk) continue;
         pk_name = q2_dbd_get_value(q2->attributes, i, "column_name");
@@ -2134,14 +2142,13 @@ static const char* q2_sql_select_tab_col_prm(q2_t *q2)
                   q2->table != NULL && q2->column != NULL &&
                   q2->r_params != NULL);
     if (!ok) return NULL;
-
     pks_ar = NULL;
     pars_v = NULL;
     ordby_ar = NULL;
     conds_ar = NULL;
     conds_s = NULL;
     uri_column_is_pk = 0;
-    for (int i = 0; i < q2->attributes->nelts; i ++) {
+    for (int i = 0; i < q2->attributes->nelts; i++) {
         c_name = q2_dbd_get_value(q2->attributes, i, "column_name");
         if (c_name == NULL) continue;
         c_val = apr_table_get(q2->r_params, c_name);
@@ -2195,10 +2202,9 @@ static const char* q2_sql_select_tab_prm(q2_t *q2)
                   q2->column == NULL && q2->r_params != NULL &&
                   q2->uri_keys == NULL);
     if (!ok) return NULL;
-
     conds_ar = NULL;
     ordby_ar = NULL;
-    for (int i = 0; i < q2->attributes->nelts; i ++) {
+    for (int i = 0; i < q2->attributes->nelts; i++) {
         c_name = q2_dbd_get_value(q2->attributes, i, "column_name");
         if (c_name == NULL) continue;
         c_val = apr_table_get(q2->r_params, c_name);
@@ -2234,7 +2240,7 @@ static const char* q2_sql_select_tab_prm(q2_t *q2)
     limit = NULL;
     if (q2->dbd_server_type == Q2_DBD_MSSQL) {
         const char *pk_name = NULL;
-        for (int i = 0; i < q2->attributes->nelts; i ++) {
+        for (int i = 0; i < q2->attributes->nelts; i++) {
             int is_pk = (unsigned char)atoi(q2_dbd_get_value(q2->attributes, i, "is_primary_key"));
             if (is_pk) pk_name = q2_dbd_get_value(q2->attributes, i, "column_name");
         }
@@ -2244,19 +2250,19 @@ static const char* q2_sql_select_tab_prm(q2_t *q2)
         }
         limit = apr_psprintf(q2->pool,
                              "ORDER BY %s OFFSET %d ROWS FETCH NEXT %d ROWS ONLY",
-                             pk_name, q2->next_page, q2->pagination_ppg);
+                             pk_name, q2->pagination_offset, q2->pagination_ppg);
     }
     if (q2->dbd_server_type == Q2_DBD_PGSQL ||
         q2->dbd_server_type == Q2_DBD_SQLT3)
     {
         limit = apr_psprintf(q2->pool,
                              "LIMIT %d OFFSET %d",
-                             q2->pagination_ppg, q2->next_page);
+                             q2->pagination_ppg, q2->pagination_offset);
     }
     if (q2->dbd_server_type == Q2_DBD_MYSQL && q2->pagination_ppg) {
         limit = apr_psprintf(q2->pool,
                              "LIMIT %d,%d",
-                             q2->next_page, q2->pagination_ppg);
+                             q2->pagination_offset, q2->pagination_ppg);
     }
 
     q2->query_num_rows = q2_count_rows(q2, sql);
@@ -2277,14 +2283,13 @@ static const char* q2_sql_select_tab_key_prm(q2_t *q2)
                   q2->uri_tables->nelts == 1 && q2->table != NULL &&
                   q2->column == NULL && q2->r_params != NULL &&
                   q2->uri_keys != NULL);
-        
     if (!ok) return NULL;
     key_conds_s = q2_sql_key_conds(q2);
     if (key_conds_s == NULL) return NULL;
     if (q2->attributes == NULL || q2->attributes->nelts <= 0) return NULL;
     conds_ar = NULL;
     ordby_ar = NULL;
-    for (int i = 0; i < q2->attributes->nelts; i ++) {
+    for (int i = 0; i < q2->attributes->nelts; i++) {
         c_name = q2_dbd_get_value(q2->attributes, i, "column_name");
         if (c_name == NULL) continue;
         c_val = apr_table_get(q2->r_params, c_name);
@@ -2321,13 +2326,11 @@ static const char* q2_sql_select_tab_key_col(q2_t *q2)
 {
     unsigned char ok;
     const char *key_conds_s;
-    
     ok = (unsigned char)(q2->uri_tables != NULL &&
                   q2->uri_tables->nelts == 1 && q2->table != NULL &&
                   q2->uri_keys != NULL && q2->r_params == NULL);
     
     if (!ok) return NULL;
-
     key_conds_s = q2_sql_key_conds(q2);
     if (key_conds_s == NULL) return NULL;
 
@@ -2379,7 +2382,7 @@ static const char* q2_sql_select_tabs_key(q2_t *q2)
     if (q2->attributes->nelts <= 0) return NULL;
     c_name = NULL;
     c_val = NULL;
-    for (int i = 0; i < q2->attributes->nelts;  i ++) {
+    for (int i = 0; i < q2->attributes->nelts;  i++) {
         t_name = q2_dbd_get_value(q2->attributes, i, "referenced_table");
         if (t_name == NULL) continue;
         if (strcmp(t_name, first_uri_tab) != 0) continue;
@@ -2434,7 +2437,7 @@ static const char* q2_sql_select_tabs_key_prm_11(q2_t *q2)
     if (q2->attributes->nelts <= 0) return NULL;
     conds_ar = NULL;
     ordby_ar = NULL;
-    for (int i = 0; i < q2->attributes->nelts; i ++) {
+    for (int i = 0; i < q2->attributes->nelts; i++) {
         c_name = q2_dbd_get_value(q2->attributes, i, "column_name");
         if (c_name == NULL) continue;
         c_val = apr_table_get(q2->r_params, c_name);
@@ -2474,7 +2477,7 @@ static const char* q2_sql_select_tabs_key_prm_1m(q2_t *q2)
     k_val = NULL;
     conds_ar = NULL;
     ordby_ar = NULL;
-    for (int i = 0; i < q2->attributes->nelts; i ++) {
+    for (int i = 0; i < q2->attributes->nelts; i++) {
         t_name = q2_dbd_get_value(q2->attributes, i, "referenced_table");
         if (t_name == NULL) continue;
         if (strcmp(t_name, first_uri_tab) == 0) {
@@ -2535,7 +2538,7 @@ static const char* q2_sql_select_tabs_key_prm_mm(q2_t *q2)
     if (lst_uri_tab_col_attrs->nelts <= 0) return NULL;
     conds_ar = NULL;
     ordby_ar = NULL;
-    for (int i = 0; i < lst_uri_tab_col_attrs->nelts; i ++) {
+    for (int i = 0; i < lst_uri_tab_col_attrs->nelts; i++) {
         c_name = q2_dbd_get_value(lst_uri_tab_col_attrs, i, "column_name");
         if (c_name == NULL) continue;
         c_val = apr_table_get(q2->r_params, c_name);
@@ -2598,7 +2601,7 @@ static const char* q2_sql_insert(q2_t *q2)
     apr_array_header_t *keys = NULL, *params = NULL, *defaults = NULL;
     is_pk_multi = q2->pk_attrs->nelts > 1;
     if (!is_pk_multi) {
-        for (int i = 0; i < q2->attributes->nelts; i ++) {
+        for (int i = 0; i < q2->attributes->nelts; i++) {
             is_pk = (unsigned char)atoi(q2_dbd_get_value(q2->attributes, i, "is_primary_key"));
             if (!is_pk) continue;
             is_auto_increment = (unsigned char)atoi(q2_dbd_get_value(q2->attributes, i, "is_auto_increment"));
@@ -2615,7 +2618,7 @@ static const char* q2_sql_insert(q2_t *q2)
         }
     }
     if (q2->uri_tables->nelts > 1) {
-        for (int i = 0; i < q2->attributes->nelts; i ++) {
+        for (int i = 0; i < q2->attributes->nelts; i++) {
             is_pk = (unsigned char)atoi(q2_dbd_get_value(q2->attributes, i, "is_primary_key"));
             if (!is_pk) continue;
             referenced_table = q2_dbd_get_value(q2->attributes, i, "referenced_table");
@@ -2639,7 +2642,7 @@ static const char* q2_sql_insert(q2_t *q2)
     if (params == NULL) return NULL;
     k = NULL;
     v = NULL;
-    for (int i = 0; i < q2->attributes->nelts; i ++) {
+    for (int i = 0; i < q2->attributes->nelts; i++) {
         k = q2_dbd_get_value(q2->attributes, i, "column_name");
         if (k == NULL) return NULL;
         APR_ARRAY_PUSH(keys, const char*) = k;
@@ -2702,7 +2705,7 @@ static const char* q2_sql_update(q2_t *q2, int all)
                      "%s", "UPDATE not allowed on a table with multiple PK");
         return NULL;
     }
-    for (int i = 0; i < q2->attributes->nelts; i ++) {
+    for (int i = 0; i < q2->attributes->nelts; i++) {
         is_primary_key = (unsigned char)atoi(q2_dbd_get_value(q2->attributes, i, "is_primary_key"));
         if (is_primary_key) continue;
         is_numeric = (unsigned char)atoi(q2_dbd_get_value(q2->attributes, i, "is_numeric"));
@@ -2749,7 +2752,7 @@ static const char* q2_sql_update(q2_t *q2, int all)
     }
     pairs_s = apr_array_pstrcat(q2->pool, pairs_arr, ',');
     if (pairs_s == NULL) return NULL;
-    for (int i = 0; i < q2->attributes->nelts; i ++) {
+    for (int i = 0; i < q2->attributes->nelts; i++) {
         const char *is_pk =
             q2_dbd_get_value(q2->attributes, i, "is_primary_key");
         if (is_pk == NULL || !(unsigned char)atoi(is_pk)) continue;
@@ -2778,7 +2781,7 @@ static const char* q2_sql_delete(q2_t *q2)
         q2_log_error(q2, "%s", "No primary key in URI");
         return NULL;
     }
-    for (int i = 0; i < q2->attributes->nelts; i ++) {
+    for (int i = 0; i < q2->attributes->nelts; i++) {
         cname = q2_dbd_get_value(q2->attributes, i, "column_name");
         if (cname == NULL) return NULL;
         ref_table = q2_dbd_get_value(q2->attributes, i, "referenced_table");
@@ -2828,20 +2831,59 @@ static const char* q2_sql_delete(q2_t *q2)
                         q2->table, key_conds_s);
 }
 
+// static int q2_paginate_results(q2_t *q2)
+// {
+//     int next;
+//     const apr_strmatch_pattern *pattern;
+//     const char *next_p;
+//     const char *path, *new_path, *qstr;
+//     if (!q2->pagination_ppg) return 1;
+//     if (q2->sql == NULL || q2->results == NULL ||
+//         q2->results->nelts < q2->pagination_ppg) return 1;
+//     next = q2->pagination_ppg + q2->pagination_offset;
+//     if (next > q2->query_num_rows) return 1;
+//     new_path = NULL;
+//     qstr = NULL;
+//     unsigned char found = q2_in_string(q2->request_uri, '?');
+//     if (found) {
+//         apr_array_header_t *ar = q2_split(q2->pool, q2->request_uri, "?");
+//         path = APR_ARRAY_IDX(ar, 0, const char*);
+//         qstr = APR_ARRAY_IDX(ar, 1, const char*);
+//     } else {
+//         path = apr_pstrdup(q2->pool, q2->request_uri);
+//     }
+//     pattern = apr_strmatch_precompile(q2->pool, "/next/", 1);
+//     next_p = apr_strmatch(pattern, path, strlen(path));
+//     if (next_p != NULL)
+//         new_path = apr_pstrndup(q2->pool, path,
+//                                 (int)strlen(path) - (int)strlen(next_p));
+//     q2->pagination_next = apr_psprintf(q2->pool, "%s/next/%d%s%s",
+//                             new_path == NULL ? path : new_path,
+//                             next,
+//                             qstr == NULL ? "" : "?",
+//                             qstr == NULL ? "" : qstr);
+//     return 0;
+// }
+
 static int q2_paginate_results(q2_t *q2)
 {
-    int next;
+    int pagination_next, pagination_prev;
     const apr_strmatch_pattern *pattern;
     const char *next_p;
     const char *path, *new_path, *qstr;
+
     if (!q2->pagination_ppg) return 1;
+
     if (q2->sql == NULL || q2->results == NULL ||
         q2->results->nelts < q2->pagination_ppg) return 1;
-    next = q2->pagination_ppg + q2->next_page;
-    if (next > q2->query_num_rows) return 1;
+
+    pagination_next = q2->pagination_ppg + q2->pagination_offset;
+
+    pagination_prev = pagination_next - (q2->pagination_ppg * 2);
+
     new_path = NULL;
     qstr = NULL;
-    unsigned char found = q2_in_string(q2->request_uri, '?');
+    int found = q2_in_string(q2->request_uri, '?');
     if (found) {
         apr_array_header_t *ar = q2_split(q2->pool, q2->request_uri, "?");
         path = APR_ARRAY_IDX(ar, 0, const char*);
@@ -2854,11 +2896,37 @@ static int q2_paginate_results(q2_t *q2)
     if (next_p != NULL)
         new_path = apr_pstrndup(q2->pool, path,
                                 (int)strlen(path) - (int)strlen(next_p));
-    q2->next = apr_psprintf(q2->pool, "%s/next/%d%s%s",
-                            new_path == NULL ? path : new_path,
-                            next,
-                            qstr == NULL ? "" : "?",
-                            qstr == NULL ? "" : qstr);
+
+    if (pagination_next < q2->query_num_rows) {
+        q2->pagination_next = apr_psprintf(q2->pool, "%s/next/%d%s%s",
+                                new_path == NULL ? path : new_path,
+                                pagination_next,
+                                qstr == NULL ? "" : "?",
+                                qstr == NULL ? "" : qstr);
+    }
+    
+    if (pagination_prev >= 0) {
+        if (pagination_prev > 0) {
+            q2->pagination_prev = apr_psprintf(q2->pool, "%s/next/%d%s%s",
+                                    new_path == NULL ? path : new_path,
+                                    pagination_prev,
+                                    qstr == NULL ? "" : "?",
+                                    qstr == NULL ? "" : qstr);
+        } else {
+            q2->pagination_prev = apr_psprintf(q2->pool, "%s%s%s",
+                                    new_path == NULL ? path : new_path,
+                                    qstr == NULL ? "" : "?",
+                                    qstr == NULL ? "" : qstr);
+        }
+    }
+// #ifdef _APMOD
+//     if (q2->pagination_prev != NULL)
+//         ap_rprintf(q2->r_rec, "rows %d\n", q2->query_num_rows);
+// #endif
+
+    q2->pagination_total_rows = q2->query_num_rows;
+
+
     return 0;
 }
 
@@ -2888,8 +2956,12 @@ static q2_t* q2_initialize(apr_pool_t *mp)
     q2->id_last_fn = NULL;
     q2->db_vers_fn = NULL;
     q2->dbd_server_version = NULL;
-    q2->next_page = 0;
-    q2->next = NULL;
+    q2->pagination_offset = 0;
+    q2->pagination_next = NULL;
+    q2->pagination_prev = NULL;
+    q2->pagination_curr = NULL;
+    q2->pagination_total_pages = 0;
+    q2->pagination_total_rows = 0;
     q2->uri_tables = NULL;
     q2->uri_keys = NULL;
     q2->table = NULL;
@@ -3078,7 +3150,7 @@ static int q2_acquire(q2_t *q2)
         return 1;
     }
     uri_arr = q2_split(q2->pool, ht_uri->path , "/");
-    q2->next_page = q2_uri_get_pages(q2->pool, uri_arr);
+    q2->pagination_offset = q2_uri_get_pag_offset(q2->pool, uri_arr);
     q2->uri_tables = q2_uri_get_tabs(q2->pool, uri_arr);
     q2->uri_keys = q2_uri_get_keys(q2->pool, uri_arr);
     tab_found = 0;
@@ -3150,7 +3222,7 @@ static int q2_acquire(q2_t *q2)
         n_ht_params = apr_table_elts(q2->request_params)->nelts;
         if (n_params < n_ht_params) {
             q2->r_others = apr_table_make(q2->pool, n_ht_params-n_params);
-            for (int i = 0; i < n_ht_params; i ++) {
+            for (int i = 0; i < n_ht_params; i++) {
                 apr_table_entry_t *e =
                     &((apr_table_entry_t*)((
                         apr_table_elts(q2->request_params))->elts))[i];
@@ -3255,9 +3327,13 @@ static const char* q2_encode_json(q2_t *q2)
                                                  q2->last_insert_id))
                     : "null")
             : q2_json_array(q2->pool, q2->results, Q2_TABLE),
-        q2->next == NULL
+        q2->pagination_total_rows,
+        q2->pagination_prev == NULL
             ? "null"
-            : q2_json_value(q2->pool, q2->next),
+            : q2_json_value(q2->pool, q2->pagination_prev),
+        q2->pagination_next == NULL
+            ? "null"
+            : q2_json_value(q2->pool, q2->pagination_next),
         q2->affected_rows,
         q2->last_insert_id == NULL
             ? "null"

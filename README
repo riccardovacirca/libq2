@@ -1,3 +1,12 @@
+
+ __   _____           ________
+|  | |__|_ |__   ___________  \
+|  | |  || __ \ / ____//  ____/
+|  |__  || \_\ \ /_|  |       \
+|____/__||_____/___   |________\
+                   |__|
+
+
 libq2
 =====
 Author: Riccardo Vacirca (riccardovacirca@yahoo.it)
@@ -58,8 +67,18 @@ File: /etc/apache2/mods-available/q2.conf
     </Location>
 </IfModule>
 
-Authentication
+Basic examples
 ==============
+GET /q2/v1/customers
+POST /q2/v1/customers
+PUT /q2/v1/customers?name=bob
+PATCH /q2/v1/customers/name + bob
+DELETE /q2/v1/customers/1
+
+==============
+AUTHENTICATION
+==============
+
 Example test.accounts table
 ---------------------------
 create table accounts (
@@ -67,11 +86,20 @@ create table accounts (
     email varchar(50) not null,
     password varchar(50) not null
     );
-insert into accounts values (1, "bob@example.com", "secret");
+
+insert into accounts values (
+    1, "bob@example.com", "secret");
 
 File: q2.conf
 ----
 Q2DBDAuthParams "accounts:email:password:10000"
+
+
+digest = base64encode(
+                 hmac( "sha256",
+                       "secret",
+                       "GET+/users/username/account+20apr201312:59:24+123456"))
+
 
 PHP
 ---
